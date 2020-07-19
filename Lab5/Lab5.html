@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lab5</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+    </style>
+<body onload="startGL()" onkeydown="handlekeydown(event)">
+    <canvas id="canvas3D" width="640" height="480" style="border: solid black 1px"></canvas>
+    <script >var gl;
+var shaderProgram;
+var uPMatrix;
+var vertexPositionBuffer;
+var vertexColorBuffer;
+
+const createRect2 = (p1x, p1y, p1z, p2x, p2y, p2z, p3x, p3y, p3z, p4x, p4y, p4z) => {
+    let vertexPosition = [p1x, p1y, p1z, p2x, p2y, p2z, p4x, p4y, p4z,
+        p1x, p1y, p1z, p4x, p4y, p4z, p3x, p3y, p3z];
+    return vertexPosition;
+}
+
+const createRectCoords = (mu, mv, dau, dav, dbu, dbv) => {
+    p1u = mu; p1v = mv;
+    p2u = mu + dau; p2v = mv + dav;
+    p3u = mu + dbu; p3v = mv + dbv;
+    p4u = mu + dau + dbu; p4v = mv + dav + dbv;
+    let vertexCoord = [p1u, p1v, p2u, p2v, p4u, p4v,
+        p1u, p1v, p4u, p4v, p3u, p3v];
+    return vertexCoord;
+}
+
+const createRectCoords2 = (p1u, p1v, p2u, p2v, p3u, p3v, p4u, p4v) => {
+    let vertexCoord = [p1u, p1v, p2u, p2v, p4u, p4v,
+        p1u, p1v, p4u, p4v, p3u, p3v];
+    return vertexCoord;
+}
+
+const createRectColor =(r, g, b) => {
+    let vertexColor = [r, g, b, r, g, b, r, g, b,
+        r, g, b, r, g, b, r, g, b];
+    return vertexColor;
+}
+
+const MatrixMul =(a, b) => {
+    c = [
+        0, 0, 0, 0,
+        0, 0, 0, 0,
+        0, 0, 0, 0,
+        0, 0, 0, 0
+    ]
+    for (let i = 0; i < 4; i++) {
+        for (let j = 0; j < 4; j++) {
+            c[i * 4 + j] = 0.0;
+            for (let k = 0; k < 4; k++) {
+                c[i * 4 + j] += a[i * 4 + k] * b[k * 4 + j];
+            }
+        }
+    }
+    return c;
+}
+
+const startGL = () => {
+    let canvas = document.getElementById("canvas3D");
+    gl = canvas.getContext("experimental-webgl");
+    gl.viewportWidth = canvas.width;
+    gl.viewportHeight = canvas.height;
+
+    //Kod shaderów
+    const vertextShaderSource = ` //Znak akcentu z przycisku tyldy - na lewo od przycisku 1 na klawiaturze
+    precision highp float;
+    attribute vec3 aVertexPosition;
+    attribute vec3 aVertexColor;
+    attribute vec2 aVertexCoords;
+    uniform mat4 uMVMatrix;
+    uniform mat4 uPMatrix;
+    varying vec3 vColor;
+    varying vec2 vTexUV;
+    void main(void) {
+      gl_Position = uPMatrix * uMVMatrix * vec4(aVertexPosition, 1.0); //Dokonanie transformacji położenia punktów z przestrzeni 3D do przestrzeni obrazu (2D)
+      vColor = aVertexColor;
+      vTexUV = aVertexCoords;
+    }
+  `;
+    const fragmentShaderSource = `
+    precision highp float;
+    varying vec3 vColor;
+    varying vec2 vTexUV;
+    uniform sampler2D uSampler;
+    void main(void) {
+      //gl_FragColor = vec4(vColor,1.0); //Ustalenie stałego koloru wszystkich punktów sceny
+      gl_FragColor = texture2D(uSampler,vTexUV)*vec4(vColor,1.0); //Odczytanie punktu tekstury i przypisanie go jako koloru danego punktu renderowaniej figury
+    }
+  `;
+    let fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
+    let vertexShader = gl.createShader(gl.VERTEX_SHADER);
+    gl.shaderSource(fragmentShader, fragmentShaderSource);
+    gl.shaderSource(vertexShader, vertextShaderSource);
+    gl.compileShader(fragmentShader);
+    gl.compileShader(vertexShader);
+    if (!gl.getShaderParameter(fragmentShader, gl.COMPILE_STATUS)) {
+        alert(gl.getShaderInfoLog(fragmentShader));
+        return null;
+    }
+    if (!gl.getShaderParameter(vertexShader, gl.COMPILE_STATUS)) {
+        alert(gl.getShaderInfoLog(vertexShader));
+        return null;
+    }
+
+    shaderProgram = gl.createProgram();
+    gl.attachShader(shaderProgram, vertexShader);
+    gl.attachShader(shaderProgram, fragmentShader);
+    gl.linkProgram(shaderProgram);
+    if (!gl.getProgramParameter(shaderProgram, gl.LINK_STATUS)) alert("Could not initialise shaders");
+
+
+    let vertexPosition = [];
+    let stepAngle = 360 / 12;
+    let stepElevation = 90 / 3;
+    let Radius = 5.0;
+    let radius = 2.0;
+
+    for (let angle = 0; angle < 360; angle += stepAngle) {
+        for (let elevation = 0; elevation < 360; elevation += stepElevation) {
+            let px1 = Radius * Math.cos(angle * Math.PI / 180) - radius * Math.cos(angle * Math.PI / 180) * Math.sin(elevation * Math.PI / 180);
+            let py1 = radius * Math.cos(elevation * Math.PI / 180);
+            let pz1 = Radius * Math.sin(angle * Math.PI / 180) - radius * Math.sin(angle * Math.PI / 180) * Math.sin(elevation * Math.PI / 180);
+
+            let px2 = Radius * Math.cos((angle + stepAngle) * Math.PI / 180) - radius * Math.cos((angle + stepAngle) * Math.PI / 180) * Math.sin(elevation * Math.PI / 180);
+            let py2 = radius * Math.cos(elevation * Math.PI / 180);
+            let pz2 = Radius * Math.sin((angle + stepAngle) * Math.PI / 180) - radius * Math.sin((angle + stepAngle) * Math.PI / 180) * Math.sin(elevation * Math.PI / 180);
+
+            let px3 = Radius * Math.cos(angle * Math.PI / 180) - radius * Math.cos(angle * Math.PI / 180) * Math.sin((elevation + stepElevation) * Math.PI / 180);
+            let py3 = radius * Math.cos((elevation + stepElevation) * Math.PI / 180);
+            let pz3 = Radius * Math.sin(angle * Math.PI / 180) - radius * Math.sin(angle * Math.PI / 180) * Math.sin((elevation + stepElevation) * Math.PI / 180);
+
+            let px4 = Radius * Math.cos((angle + stepAngle) * Math.PI / 180) - radius * Math.cos((angle + stepAngle) * Math.PI / 180) * Math.sin((elevation + stepElevation) * Math.PI / 180);
+            let py4 = radius * Math.cos((elevation + stepElevation) * Math.PI / 180);
+            let pz4 = Radius * Math.sin((angle + stepAngle) * Math.PI / 180) - radius * Math.sin((angle + stepAngle) * Math.PI / 180) * Math.sin((elevation + stepElevation) * Math.PI / 180);
+
+            vertexPosition.push(...createRect2(px1, py1, pz1, px2, py2, pz2, px3, py3, pz3, px4, py4, pz4)); // Ściana XZ
+        }
+    }
+
+
+    vertexPositionBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, vertexPositionBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertexPosition), gl.STATIC_DRAW);
+    vertexPositionBuffer.itemSize = 3;
+    vertexPositionBuffer.numItems = vertexPosition.length / 9;
+
+    let vertexColor = [];
+
+    counter = 0;
+    for (let angle = 0; angle < 360; angle += stepAngle) {
+        for (let elevation = 0; elevation < 360; elevation += stepElevation) {
+            if (counter % 5 == 0) vertexColor.push(...createRectColor(0.0, 1.0, 1.0));
+            if (counter % 5 == 1) vertexColor.push(...createRectColor(1.0, 0.0, 1.0));
+            if (counter % 5 == 2) vertexColor.push(...createRectColor(1.0, 1.0, 0.0));
+            if (counter % 5 == 3) vertexColor.push(...createRectColor(0.0, 0.0, 0.0));
+            if (counter % 5 == 4) vertexColor.push(...createRectColor(0.0, 0.0, 1.0));
+            counter++;
+        }
+    }
+    vertexColorBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, vertexColorBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertexColor), gl.STATIC_DRAW);
+    vertexColorBuffer.itemSize = 3;
+    vertexColorBuffer.numItems = vertexColor.length / 9;
+
+    let vertexCoords = [];
+
+    for (let angle = 0; angle < 360; angle += stepAngle) {
+        for (let elevation = 0; elevation < 360; elevation += stepElevation) {
+            vertexCoords.push(...createRectCoords(0, 0, 1, 0, 0, 1));
+        }
+    }
+
+    vertexCoordsBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, vertexCoordsBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertexCoords), gl.STATIC_DRAW);
+    vertexCoordsBuffer.itemSize = 2;
+    vertexCoordsBuffer.numItems = vertexCoords.length / 6;
+
+    textureBuffer = gl.createTexture();
+    var textureImg = new Image();
+    textureImg.onload = function () {
+        gl.bindTexture(gl.TEXTURE_2D, textureBuffer);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, textureImg);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    }
+    textureImg.src = "Tex.png";
+
+
+    //Macierze opisujące położenie wirtualnej kamery w przestrzenie 3D
+    let aspect = gl.viewportWidth / gl.viewportHeight;
+    let fov = 45.0 * Math.PI / 180.0;
+    let zFar = 100.0;
+    let zNear = 0.1;
+    uPMatrix = [
+        1.0 / (aspect * Math.tan(fov / 2)), 0, 0, 0,
+        0, 1.0 / (Math.tan(fov / 2)), 0, 0,
+        0, 0, -(zFar + zNear) / (zFar - zNear), -1,
+        0, 0, -(2 * zFar * zNear) / (zFar - zNear), 0.0,
+    ];
+    Tick();
+}
+var angleZ = 0;
+var angleY = 0;
+var angleX = 0;
+var tz = -20;
+var ty = -15;
+var tx = 0;
+
+let uMVRotZplus = [
+    +Math.cos(1 * Math.PI / 180.0), +Math.sin(1 * Math.PI / 180.0), 0, 0,
+    -Math.sin(1 * Math.PI / 180.0), +Math.cos(1 * Math.PI / 180.0), 0, 0,
+    0, 0, 1, 0,
+    0, 0, 0, 1
+];
+
+let uMVRotZminus = [
+    +Math.cos(-1 * Math.PI / 180.0), +Math.sin(-1 * Math.PI / 180.0), 0, 0,
+    -Math.sin(-1 * Math.PI / 180.0), +Math.cos(-1 * Math.PI / 180.0), 0, 0,
+    0, 0, 1, 0,
+    0, 0, 0, 1
+];
+
+let uMVRotYplus = [
+    +Math.cos(1 * Math.PI / 180.0), 0, -Math.sin(1 * Math.PI / 180.0), 0,
+    0, 1, 0, 0,
+    +Math.sin(1 * Math.PI / 180.0), 0, +Math.cos(1 * Math.PI / 180.0), 0,
+    0, 0, 0, 1
+];
+
+let uMVRotYminus = [
+    +Math.cos(-1 * Math.PI / 180.0), 0, -Math.sin(-1 * Math.PI / 180.0), 0,
+    0, 1, 0, 0,
+    +Math.sin(-1 * Math.PI / 180.0), 0, +Math.cos(-1 * Math.PI / 180.0), 0,
+    0, 0, 0, 1
+];
+
+let uMVRotXplus = [
+    1, 0, 0, 0,
+    0, +Math.cos(1 * Math.PI / 180.0), +Math.sin(1 * Math.PI / 180.0), 0,
+    0, -Math.sin(1 * Math.PI / 180.0), +Math.cos(1 * Math.PI / 180.0), 0,
+    0, 0, 0, 1
+];
+
+let uMVRotXminus = [
+    1, 0, 0, 0,
+    0, +Math.cos(-1 * Math.PI / 180.0), +Math.sin(-1 * Math.PI / 180.0), 0,
+    0, -Math.sin(-1 * Math.PI / 180.0), +Math.cos(-1 * Math.PI / 180.0), 0,
+    0, 0, 0, 1
+];
+
+let uMVRotation = [
+    1, 0, 0, 0, //Macierz jednostkowa
+    0, 1, 0, 0,
+    0, 0, 1, 0,
+    0, 0, 0, 1
+];
+
+for (i = 0; i < 30; i++) {
+    uMVRotation = MatrixMul(uMVRotation, uMVRotXplus);
+}
+
+const Tick = () => {
+    let uMVMatrix = [
+        1, 0, 0, 0, //Macierz jednostkowa
+        0, 1, 0, 0,
+        0, 0, 1, 0,
+        0, 0, 0, 1
+    ];
+
+    let uMVRotZ = [
+        +Math.cos(angleZ * Math.PI / 180.0), +Math.sin(angleZ * Math.PI / 180.0), 0, 0,
+        -Math.sin(angleZ * Math.PI / 180.0), +Math.cos(angleZ * Math.PI / 180.0), 0, 0,
+        0, 0, 1, 0,
+        0, 0, 0, 1
+    ];
+
+    let uMVRotY = [
+        +Math.cos(angleY * Math.PI / 180.0), 0, -Math.sin(angleY * Math.PI / 180.0), 0,
+        0, 1, 0, 0,
+        +Math.sin(angleY * Math.PI / 180.0), 0, +Math.cos(angleY * Math.PI / 180.0), 0,
+        0, 0, 0, 1
+    ];
+
+    let uMVRotX = [
+        1, 0, 0, 0,
+        0, +Math.cos(angleX * Math.PI / 180.0), +Math.sin(angleX * Math.PI / 180.0), 0,
+        0, -Math.sin(angleX * Math.PI / 180.0), +Math.cos(angleX * Math.PI / 180.0), 0,
+        0, 0, 0, 1
+    ];
+
+    let uMVTranslateZ = [
+        1, 0, 0, 0,
+        0, 1, 0, 0,
+        0, 0, 1, 0,
+        0, 0, tz, 1
+    ];
+
+    let uMVTranslateY = [
+        1, 0, 0, 0,
+        0, 1, 0, 0,
+        0, 0, 1, 0,
+        0, ty, 0, 1
+    ];
+
+    let uMVTranslateX = [
+        1, 0, 0, 0,
+        0, 1, 0, 0,
+        0, 0, 1, 0,
+        tx, 0, 0, 1
+    ];
+
+    uMVMatrix = MatrixMul(uMVMatrix, uMVTranslateZ);
+    uMVMatrix = MatrixMul(uMVMatrix, uMVTranslateY);
+    uMVMatrix = MatrixMul(uMVMatrix, uMVTranslateX);
+    uMVMatrix = MatrixMul(uMVMatrix, uMVRotation);
+
+
+    //Render Scene
+    gl.viewport(0, 0, gl.viewportWidth, gl.viewportHeight);
+    gl.clearColor(.08, 0.85, 0.1, 0.3); 
+    gl.clearDepth(1.0);             //Wyczyścienie bufora głebi najdalszym planem
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.useProgram(shaderProgram)   //Użycie przygotowanego programu shaderowego
+
+    gl.enable(gl.DEPTH_TEST);           // Włączenie testu głębi - obiekty bliższe mają przykrywać obiekty dalsze
+    gl.depthFunc(gl.LEQUAL);            //
+
+    gl.uniformMatrix4fv(gl.getUniformLocation(shaderProgram, "uPMatrix"), false, new Float32Array(uPMatrix)); //Wgranie macierzy kamery do pamięci karty graficznej
+    gl.uniformMatrix4fv(gl.getUniformLocation(shaderProgram, "uMVMatrix"), false, new Float32Array(uMVMatrix));
+
+    gl.enableVertexAttribArray(gl.getAttribLocation(shaderProgram, "aVertexPosition"));  //Przekazanie położenia
+    gl.bindBuffer(gl.ARRAY_BUFFER, vertexPositionBuffer);
+    gl.vertexAttribPointer(gl.getAttribLocation(shaderProgram, "aVertexPosition"), vertexPositionBuffer.itemSize, gl.FLOAT, false, 0, 0);
+
+    gl.enableVertexAttribArray(gl.getAttribLocation(shaderProgram, "aVertexColor"));  //Przekazanie kolorów
+    gl.bindBuffer(gl.ARRAY_BUFFER, vertexColorBuffer);
+    gl.vertexAttribPointer(gl.getAttribLocation(shaderProgram, "aVertexColor"), vertexColorBuffer.itemSize, gl.FLOAT, false, 0, 0);
+
+    gl.enableVertexAttribArray(gl.getAttribLocation(shaderProgram, "aVertexCoords"));  //Pass the geometry
+    gl.bindBuffer(gl.ARRAY_BUFFER, vertexCoordsBuffer);
+    gl.vertexAttribPointer(gl.getAttribLocation(shaderProgram, "aVertexCoords"), vertexCoordsBuffer.itemSize, gl.FLOAT, false, 0, 0);
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, textureBuffer);
+    gl.uniform1i(gl.getUniformLocation(shaderProgram, "uSampler"), 0);
+
+    gl.drawArrays(gl.TRIANGLES, 0, vertexPositionBuffer.numItems * vertexPositionBuffer.itemSize); //Faktyczne wywołanie rendrowania
+
+    setTimeout(Tick, 100);
+}
+const  handlekeydown = (e) =>{
+    if (e.keyCode == 87) { //W
+        angleX = angleX + 1.0;
+        uMVRotation = MatrixMul(uMVRotation, uMVRotXplus);
+    }
+    if (e.keyCode == 83) { //S
+        angleX = angleX - 1.0;
+        uMVRotation = MatrixMul(uMVRotation, uMVRotXminus);
+    }
+    if (e.keyCode == 68) { //D
+        angleY = angleY + 1.0;
+        uMVRotation = MatrixMul(uMVRotation, uMVRotYplus);
+    }
+    if (e.keyCode == 65) { //A
+        angleY = angleY - 1.0;
+        uMVRotation = MatrixMul(uMVRotation, uMVRotYminus);
+    }
+    if (e.keyCode == 81) { //Q
+        angleZ = angleZ + 1.0;
+        uMVRotation = MatrixMul(uMVRotation, uMVRotZplus);
+    }
+    if (e.keyCode == 69) { //E
+        angleZ = angleZ - 1.0;
+        uMVRotation = MatrixMul(uMVRotation, uMVRotZminus);
+    }
+
+    if (e.keyCode == 73) { //I przod
+        console.log(angleX % 360);
+        d = ((angleX % 360) > 90 && (angleX % 360) < 270) ? -1 : 1;
+        tx = tx - d * Math.sin(angleY * Math.PI / 180.0) * 0.2;
+        tz = tz + d * Math.cos(angleY * Math.PI / 180.0) * 0.2;
+        ty = ty + Math.sin(angleX * Math.PI / 180.0) * 0.2;
+    }
+    if (e.keyCode == 75) { //K tyl
+        d = ((angleX % 360) > 90 && (angleX % 360) < 270) ? -1 : 1;
+        tx = tx + d * Math.sin(angleY * Math.PI / 180.0) * 0.2;
+        tz = tz - d * Math.cos(angleY * Math.PI / 180.0) * 0.2;
+        ty = ty - Math.sin(angleX * Math.PI / 180.0) * 0.2;
+    }
+    if (e.keyCode == 74) {  //J lewo
+        tx = tx - Math.sin((angleY - 90) * Math.PI / 180.0) * 0.2;
+        tz = tz + Math.cos((angleY - 90) * Math.PI / 180.0) * 0.2;
+    }
+    if (e.keyCode == 76) { //L prawo
+        tx = tx - Math.sin((angleY + 90) * Math.PI / 180.0) * 0.2;
+        tz = tz + Math.cos((angleY + 90) * Math.PI / 180.0) * 0.2;
+    }
+    if (e.keyCode == 85) ty = ty - 0.2;
+    if (e.keyCode == 79) ty = ty + 0.2;
+}</script>
+</body>
+</html>
